@@ -1,63 +1,66 @@
 # Dart secrets scanner
 
-`dart_secrets_scanner` is a command-line tool designed to scan Dart and related files in Flutter projects for hardcoded sensitive information such as API keys, tokens, passwords, and other credentials. 
-The tool also supports excluding common non-sensitive variables and paths to avoid false positives.
+`dart_secrets_scanner` is a command-line CLI tailored to Dart and Flutter projects. It detects MASVS-aligned hardcoded secrets (API keys, OAuth tokens, config strings, certificates, etc.) across code and configuration files, honors project-level exclusions, and can run automatically via GitHub Actions before publishing.
 
 ## Features
 
-- Detects hardcoded credentials, API keys, access tokens, and passwords across multiple file types (Dart, YAML, JSON, etc.).
-- Supports alphanumeric detection to identify credentials-like patterns (combination of letters, digits, and special characters).
-- Recursive scanning through subdirectories, excluding test and build-related files.
+- MASVS-first regex detection for known secrets (GitHub/GitLab PATs, AWS keys, Google API keys, Stripe keys, URLs with embedded credentials).
+- Context-aware heuristics that prioritize `.json`, `.yaml`, `.env`, and `.plist` files and flag strings whose keys contain keywords such as `apiKey`, `secrets`, `client_id`, or any custom context keywords defined in your configuration.
+- Config-driven exclusions: adjust which variable names or paths the scanner ignores via `dart_secrets_scanner.yaml`.
+- Sample config in the repository (`dart_secrets_scanner.yaml.example`) that can be copied and tuned for your project.
+- CI-ready: the GitHub Actions workflow runs `dart analyze`, `dart test`, and `dart pub publish --dry-run`, and it can publish automatically when you push a `v*` tag (with `PUB_TOKEN` secret).
 
 ## Getting Started
 
 ### Installation
 
-Clone or add the package to your Dart or Flutter project:
-
-1. Add it to your Flutter project dependencies:
+1. Add the package to your Dart/Flutter project dependencies:
    ```yaml
-   dart_secrets_scanner: 1.0.6
-
-2. Get the package dependencies:
+   dart_secrets_scanner: ^2.0.0
+   ```
+2. Fetch dependencies:
    ```bash
    dart pub get
    ```
 
 ### Usage
 
-To run the credentials scanner in your project directory, use:
+Run the scanner from your project root:
 
 ```bash
 dart run dart_secrets_scanner
 ```
 
-### Example Output
+On success the CLI prints `✅ No hardcoded secrets were detected.`; when secrets are found each result shows the file and line context with a 🔒 emoji.
 
-The scanner will identify potential hardcoded sensitive information, flagging the variable name, value, file path, and location (line number).
+## Configuration
 
+Create a `dart_secrets_scanner.yaml` file beside your `pubspec.yaml` (you can start from `dart_secrets_scanner.yaml.example`). The scanner loads the `scanner` section with the following options:
+
+- `exclude_variable_names`: list variable names (`apiKey`, `format`, etc.) that should never be reported.
+- `exclude_paths`: list directory fragments (`tool/cache`, `scripts/generated`, etc.) that the scanner should skip entirely.
+- `context_keywords`: extra keywords (for example `firebase_token` or `digicert_cert`) that should trigger MASVS-style context detection when found in config files.
+
+Example:
+
+```yaml
+scanner:
+  exclude_variable_names:
+    - format
+  exclude_paths:
+    - tool/cache
+  context_keywords:
+    - firebase_token
 ```
-Found hardcoded variable: "_proxyKeySH" with value: "hbaOakd831bDlJfy6" in /path/to/file.dart:42
-Found hardcoded variable: "kUserID" with value: "user12345" in /path/to/file.dart:44
-```
 
-### What It Scans
+## GitHub Actions
 
-The package will scan for:
+The repository ships with a workflow that:
 
-- **Sensitive Variables**: Alphanumeric variables with names like `password`, `apikey`, `token`, `secret`, etc.
-- **Hardcoded Credentials**: Variables containing both letters and numbers, generally with a minimum length of 8-16 characters.
+1. Runs `dart pub get`, `dart analyze`, and `dart test` for pushes to `main`, PRs, and tags.
+2. When a `v*` tag is pushed, it runs `dart pub publish --dry-run` and, if a `PUB_TOKEN` secret is configured, `dart pub publish --force` so the release can be fully automated.
 
-### Excluded Patterns
-
-The tool excludes common non-sensitive variables such as:
-
-- Short strings or labels that are unlikely to be credentials.
-
-
-### Customizing Exclusions
-
-If certain variables or paths need to be excluded, you can modify the exclusion pattern directly in the code by editing the `variableNameExclusionPattern`.
+Add a `PUB_TOKEN` secret to your repository to enable automatic publishing (see [Publishing to pub.dev](https://dart.dev/tools/pub/publishing)).
 
 ## Contribution
 
@@ -67,4 +70,4 @@ Feel free to open an issue or contribute to this repository if you'd like to add
 
 This project is licensed under the MIT License.
 
----
+----

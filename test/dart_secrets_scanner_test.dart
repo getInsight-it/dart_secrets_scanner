@@ -1,81 +1,80 @@
-import 'package:test/test.dart';
-import 'dart:io';
 import 'dart:async';
-import '../bin/dart_secrets_scanner.dart';
+import 'dart:io';
+
+import 'package:path/path.dart' as path;
+import 'package:test/test.dart';
+import 'package:dart_secrets_scanner/dart_secrets_scanner.dart';
 
 void main() {
-  group('Sensitive Variable Detection Tests', () {
-    setUp(() {
-      File('test_sensitive_variable.dart').writeAsStringSync('''
-        const apiKey = "12345abc";
-        final username = "user_name";
-        var password = "mypassword123";
-      ''');
+  late Directory tempDir;
 
-      File('test_non_sensitive_variable.dart').writeAsStringSync('''
-        const format = "json";
-        final secretName = "my_secret";
-      ''');
-    });
-
-    tearDown(() {
-      // Delete test files after each test
-      for (var filename in [
-        'test_sensitive_variable.dart',
-        'test_non_sensitive_variable.dart'
-      ]) {
-        final file = File(filename);
-        if (file.existsSync()) {
-          file.deleteSync();
-        }
-      }
-    });
-
-    test('Detects hardcoded sensitive variable', () async {
-      final outputBuffer = StringBuffer();
-      await capturePrint(() async {
-        await checkForSensitiveVariables();
-      }, outputBuffer);
-
-      expect(
-          outputBuffer.toString(),
-          contains(
-              'Found hardcoded variable: "apiKey" with value: "12345abc"'));
-    });
-
-    test('Does not detect non-sensitive variable', () async {
-      File('test_sensitive_variable.dart').writeAsStringSync(''' ''');
-
-      final outputBuffer = StringBuffer();
-      await capturePrint(() async {
-        await checkForSensitiveVariables();
-      }, outputBuffer);
-
-      expect(
-          outputBuffer.toString(), isNot(contains('Found hardcoded variable')));
-    });
-
-    test('Does not detect excluded variable names', () async {
-      final outputBuffer = StringBuffer();
-      await capturePrint(() async {
-        // Test with excluded variable name
-        File('test_sensitive_variable.dart')
-            .writeAsStringSync('const format = "json";');
-        await checkForSensitiveVariables();
-      }, outputBuffer);
-
-      expect(outputBuffer.toString(),
-          isNot(contains('Found hardcoded variable: "format"')));
-    });
+  setUp(() async {
+    tempDir = await Directory.systemTemp.createTemp('dart_secrets_scanner_test');
   });
+
+  tearDown(() async {
+    await tempDir.delete(recursive: true);
+  });
+
+  Future<List<ScanResult>> _runScanner() async {
+    final config = await ScannerConfig.load(root: tempDir);
+    final scanner = Scanner(root: tempDir, config: config);
+    return scanner.scan();
+  }
+
+  Future<void> _writeFile(String relativePath, String contents) async {
+    final file = File(path.join(tempDir.path, relativePath));
+    await file.create(recursive: true);
+    await file.writeAsString(contents);
+  }
+
+  test('Detects hardcoded variable in Dart files', () async {
+    await _writeFile('lib/secrets.dart', '''
+const apiKey = "Abc123xyz";
+final regularValue = "hello";
+''');
+
+    final results = await _runScanner();
+
+    expect(results.any((result) =>
+        result.message.contains('apiKey') && result.message.contains('Abc123xyz')), isTrue);
+  });
+
+  test('Respects excluded variable names from config', () async {
+    await _writeFile('lib/secret.dart', 'const apiKey = "secret-value";');
+    await _writeFile(scannerConfigFileName, '''
+scanner:
+  exclude_variable_names:
+    - apiKey
+''');
+
+    final results = await _runScanner();
+
+    expect(results.any((result) => result.message.contains('apiKey')), isFalse);
+  });
+
+  test('Detects MASVS-relevant key inside JSON files', () async {
+    await _writeFile('config/app.json', '''
+{
+  "apiKey": "Auth12345"
 }
+''');
 
-// Utility function to capture print output
-Future<void> capturePrint(
-    Future<void> Function() body, StringBuffer outputBuffer) async {
-  final spec = ZoneSpecification(print: (self, parent, zone, message) {
-    outputBuffer.writeln(message);
+    final results = await _runScanner();
+
+    expect(results.any((result) => result.message.contains('MASVS-relevant config key')), isTrue);
   });
 
-  await runZoned(body, zoneSpecification: spec);
+  test('Honors additional context keywords from config', () async {
+    await _writeFile('config/settings.yaml', 'firebase_token: "Firebase987"');
+    await _writeFile(scannerConfigFileName, '''
+scanner:
+  context_keywords:
+    - firebase_token
+''');
+
+    final results = await _runScanner();
+
+    expect(results.any((result) => result.message.contains('firebase_token')), isTrue);
+  });
 }
